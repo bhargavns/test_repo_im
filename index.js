@@ -2,6 +2,8 @@
 // <!-- Section 1 : Import Dependencies -->
 // *****************************************************
 
+
+
 const express = require('express'); // To build an application server or API
 const app = express();
 const handlebars = require('express-handlebars');
@@ -24,6 +26,19 @@ const hbs = handlebars.create({
   partialsDir: __dirname + '/views/partials',
 });
 
+// Add this near the top of your file after requires
+const fs = require('fs');
+
+// Create uploads directory if it doesn't exist
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+  console.log('Created uploads directory');
+}
+
+// This allows serving static files from the uploads directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // database configuration
 const dbConfig = {
   host: 'db', // the database server
@@ -34,6 +49,37 @@ const dbConfig = {
 };
 
 const db = pgp(dbConfig);
+
+const multer = require('multer');
+
+// Configure storage
+const storage = multer.diskStorage({
+  destination: function(req, file, cb) {
+    cb(null, 'uploads/'); // Destination folder
+  },
+  filename: function(req, file, cb) {
+    // Create unique filename with original extension
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+// Set up file filter if you want to restrict file types
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Not an image! Please upload only images.'), false);
+  }
+};
+
+// Initialize upload middleware
+const upload = multer({ 
+  storage: storage,
+  limits: {
+    fileSize: 1024 * 1024 * 5 // Limit file size to 5MB
+  },
+  fileFilter: fileFilter
+});
 
 // test your database
 db.connect()
@@ -80,29 +126,77 @@ app.get('/', (req, res) =>
     res.redirect('/login');
 });
 
+app.get('/welcome', (req, res) => {
+  res.json({status: 'success', message: 'Welcome!'});
+});
+
 //API routes for register
 app.get('/register', (req, res) => 
 {
-  res.render('register');
+  res.render('pages/register');
 });
 
-app.post('/register', async (req, res) => 
-{
+// app.post('/register', async (req, res) => {
+//   try {
+//     // Explicitly check for missing fields
+//     if (!req.body.username || !req.body.password) {
+//       return res.status(400).redirect('/register');
+//     }
+    
+//     const hash = await bcrypt.hash(req.body.password, 10);
+//     const query = 'INSERT INTO users (username, password) VALUES ($1, $2)';
+//     await db.none(query, [req.body.username, hash]);
+//     res.status(200).redirect('/login');
+//   } catch (error) {
+//     console.error('Registration error:', error);
+//     res.status(400).redirect('/register');
+//   }
+// });
+
+
+app.post('/register', upload.single('file'), async (req, res) => {
+  // Log the request body to troubleshoot
+  console.log('Register request body:', req.body);
+  
+  // Check if body is undefined or null
+  if (!req.body) {
+    console.log('Request body is undefined or null');
+    return res.status(302).redirect('/register');
+  }
+  
+  // Check for username specifically - make this check very explicit
+  if (req.body.username === undefined || req.body.username === null || req.body.username === '') {
+    console.log('Username is missing or empty');
+    return res.status(302).redirect('/register');
+  }
+  
+  // Check for password specifically - make this check very explicit
+  if (req.body.password === undefined || req.body.password === null || req.body.password === '') {
+    console.log('Password is missing or empty');
+    return res.status(302).redirect('/register');
+  }
+  
   try {
     const hash = await bcrypt.hash(req.body.password, 10);
-    const query = 'INSERT INTO users (username, password) VALUES ($1, $2)';
-    await db.none(query, [req.body.username, hash]);
-    res.redirect('/login');
+    const query = 'INSERT INTO users (username, password, profile_image) VALUES ($1, $2, $3)';
+    const filePath = req.file ? req.file.path : null;
+    console.log(filePath);
+    try {
+      await db.none(query, [req.body.username, hash, filePath]);
+      return res.status(200).redirect('/login');
+    } catch (dbError) {
+      console.error('Database error:', dbError);
+      return res.status(302).redirect('/register');
+    }
   } catch (error) {
     console.error('Registration error:', error);
-    res.redirect('/register');
+    return res.status(302).redirect('/register');
   }
 });
 
-
 //API routes for the login section
 app.get('/login', (req, res) => {
-  res.render('login.hbs');
+  res.render('pages/login');
 });
 
 app.post('/login', async (req, res) => {
@@ -116,14 +210,14 @@ app.post('/login', async (req, res) => {
 
       const match = await bcrypt.compare(password, user.password);
       if (!match) {
-          return res.render('login.hbs', { message: 'Incorrect username or password.' });
+          return res.render('pages/login', { message: 'Incorrect username or password.' });
       }
 
       req.session.user = user;
       req.session.save(() => res.redirect('/discover'));
   } catch (error) {
       console.error(error);
-      res.render('login.hbs', { message: 'An error occurred. Please try again.' });
+      res.render('pages/login', { message: 'An error occurred. Please try again.' });
   }
 });
 
@@ -144,6 +238,12 @@ app.get('/discover', (req, res) => {
   const keyword = 'music';  // Example keyword, change as needed
   const size = 5;  // Number of results to return
 
+  const user = req.session.user;
+  console.log(req.session.user)
+  // const profile_image = db.one('SELECT profile_image FROM users WHERE username = $1', [user])
+
+  
+
   axios({
     url: 'https://app.ticketmaster.com/discovery/v2/events.json',
     method: 'GET',
@@ -157,14 +257,16 @@ app.get('/discover', (req, res) => {
     },
   })
     .then(response => {
-      res.render('discover', {
+      console.log(response.data)
+      res.render('pages/discover', {
         results: response.data._embedded ? response.data._embedded.events : [],
+        profile: user.profile_image,
         message: '',
       });
     })
     .catch(error => {
       console.error(error);
-      res.render('discover', {
+      res.render('pages/discover', {
         results: [],
         message: 'Failed to fetch data from Ticketmaster API. Please try again later.',
       });
@@ -190,5 +292,5 @@ app.get('/logout', (req, res) =>
 // <!-- Section 5 : Start Server-->
 // *****************************************************
 // starting the server and keeping the connection open to listen for more requests
-app.listen(3000);
+module.exports = app.listen(3000);
 console.log('Server is listening on port 3000');
