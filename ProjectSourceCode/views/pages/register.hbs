@@ -1,0 +1,21 @@
+<div class="container">
+  <h2>Register</h2>
+  <form action="/register" method="POST" enctype="multipart/form-data">
+    <div>
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required />
+    </div>
+    <div>
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required />
+    </div>
+    <div>
+      <label for="file">Profile:</label>
+      <input type="file" id="file" name="file" />
+    </div>
+    <div>
+      <button type="submit">Register</button>
+    </div>
+  </form>
+  <p>Already have an account? <a href="/login">Login here</a></p>
+</div>
